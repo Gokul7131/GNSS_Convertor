@@ -1,0 +1,180 @@
+Downloading
+curl -c .urs_cookies -b .urs_cookies -n -L -O "https://cddis.nasa.gov/archive/gnss/data/daily/2025/001/25d/DGAR00GBR_R_20250010000_01D_30S_MO.crx.gz"
+
+Unzipping
+
+import gzip
+import shutil
+
+with gzip.open('DGAR00GBR_R_20250010000_01D_30S_MO.crx.gz', 'rb') as f_in:
+    with open('DGAR00GBR_R_20250010000_01D_30S_MO.crx', 'wb') as f_out:
+        shutil.copyfileobj(f_in, f_out)
+
+CRX2RNX Conversion
+
+CRX2RNX.exe cusv.crx
+
+
+Rinex Conversion (from v3 to v2.11)
+
+GFZRNX.exe -finp DGAR00GBR_R_20250010000_01D_30S_MO.rnx -fout DGAR00GBR_R_20250010000_01D_30S_MO.25O -v 2.11
+GFZRNX.exe -finp coco0010.25O -fout coco0010.25O -v 2.11
+GFZRNX.exe -finp COCO00AUS_R_20250010000_01D_30S_MO.rnx -satsys GR -fout dgar0010.25o -vo 2
+GFZRNX.exe -finp dgar0010.rnx -satsys GR -fout dgar0010.25o -vo 2
+
+Type conversion
+
+ren *.25o *.24o. 
+.EXE Conversion using pyinstaller 
+ 
+pyinstaller --onefile --windowed ^
+--icon=logo.ico ^
+--add-data "curl.exe;." ^
+--add-data "CRX2RNX.exe;." ^
+--add-data "GFZRNX.exe;." ^
+--add-data "background.jpg;." ^
+--add-data "Output\\.urs_cookies;Output" ^
+Rinex_Downloader.py
+
+GUI Automated Script
+
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import os
+import subprocess
+import gzip
+import shutil
+import threading
+from datetime import datetime, timedelta
+
+class RinexDownloaderApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("RINEX Downloader")
+        self.setup_gui()
+
+    def setup_gui(self):
+        frm = ttk.Frame(self.root, padding=10)
+        frm.grid(row=0, column=0, sticky="nsew")
+
+        labels = ["Earthdata Username", "Earthdata Password", "Year", "Month", "Station List (comma-separated)"]
+        self.entries = {}
+        for i, label in enumerate(labels):
+            ttk.Label(frm, text=label).grid(column=0, row=i, sticky="w")
+            entry = ttk.Entry(frm, show="*" if "Password" in label else None)
+            entry.grid(column=1, row=i)
+            self.entries[label] = entry
+
+        self.use_proxy = tk.BooleanVar()
+        proxy_chk = ttk.Checkbutton(frm, text="Use Proxy", variable=self.use_proxy)
+        proxy_chk.grid(column=0, row=len(labels), sticky="w")
+
+        self.proxy_entry = ttk.Entry(frm, width=40)
+        self.proxy_entry.grid(column=1, row=len(labels))
+
+        ttk.Label(frm, text="Output Folder").grid(column=0, row=len(labels)+1, sticky="w")
+        self.output_folder = ttk.Entry(frm, width=40)
+        self.output_folder.grid(column=1, row=len(labels)+1)
+        ttk.Button(frm, text="Browse", command=self.browse_folder).grid(column=2, row=len(labels)+1)
+
+        self.progress = ttk.Progressbar(frm, length=300)
+        self.progress.grid(column=0, row=len(labels)+2, columnspan=3, pady=10)
+
+        self.run_button = ttk.Button(frm, text="Run", command=self.run_threaded)
+        self.run_button.grid(column=0, row=len(labels)+3, columnspan=3)
+
+    def browse_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.output_folder.delete(0, tk.END)
+            self.output_folder.insert(0, folder)
+
+    def run_threaded(self):
+        threading.Thread(target=self.run_process).start()
+
+    def run_process(self):
+        creds = {key: entry.get() for key, entry in self.entries.items()}
+        stations = [s.strip().upper() for s in creds["Station List (comma-separated)"].split(",") if s.strip()]
+        output_dir = self.output_folder.get()
+        year = int(creds["Year"])
+        month = int(creds["Month"])
+
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        log_path = os.path.join(output_dir, "rinex_download.log")
+
+        def log(msg):
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a") as log_file:
+                log_file.write(f"{timestamp} - {msg}\n")
+            print(f"{timestamp} - {msg}")
+
+        netrc_path = os.path.expanduser("~/_netrc")
+        cookie_file = os.path.join(output_dir, ".urs_cookies")
+
+        days_in_month = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day
+        total_tasks = days_in_month * len(stations)
+        current_task = 0
+
+        log("Starting download and conversion process.")
+
+        for day in range(1, days_in_month + 1):
+            doy = datetime(year, month, day).timetuple().tm_yday
+            for station in stations:
+                yyyy = str(year)
+                yy = yyyy[2:]
+                ddd = f"{doy:03}"
+                base_url = f"https://cddis.nasa.gov/archive/gnss/data/daily/{yyyy}/{ddd}/{yy}d"
+                filename = f"{station}00GBR_R_{yyyy}{ddd}0000_01D_30S_MO.crx.gz"
+                gz_url = f"{base_url}/{filename}"
+                gz_path = os.path.join(output_dir, filename)
+
+                if os.path.exists(gz_path):
+                    log(f"Skipping {filename}: already exists.")
+                    current_task += 1
+                    self.progress["value"] = (current_task / total_tasks) * 100
+                    self.root.update_idletasks()
+                    continue
+
+                try:
+                    curl_cmd = ["curl", "-n", "-c", cookie_file, "-b", cookie_file, "-L", "-o", gz_path, gz_url]
+                    if self.use_proxy.get():
+                        curl_cmd.extend(["--proxy", self.proxy_entry.get()])
+
+                    subprocess.run(curl_cmd, check=True)
+
+                    if not os.path.exists(gz_path):
+                        log(f"Failed to download {filename}")
+                        continue
+
+                    crx_path = gz_path[:-3]
+                    with gzip.open(gz_path, 'rb') as f_in, open(crx_path, 'wb') as f_out:
+                        shutil.copyfileobj(f_in, f_out)
+                    os.remove(gz_path)
+
+                    subprocess.run(["CRX2RNX.exe", crx_path], check=True)
+                    rnx_path = crx_path.replace(".crx", ".rnx")
+                    os.remove(crx_path)
+
+                    final_rnx = rnx_path.replace(".rnx", f".25O")
+                    subprocess.run(["GFZRNX.exe", "-finp", rnx_path, "-fout", final_rnx, "-v", "2.11"], check=True)
+                    os.remove(rnx_path)
+
+                    log(f"Successfully processed {filename}")
+
+                except Exception as e:
+                    log(f"Error processing {filename}: {e}")
+
+                current_task += 1
+                self.progress["value"] = (current_task / total_tasks) * 100
+                self.root.update_idletasks()
+
+        log("Download and conversion completed.")
+        messagebox.showinfo("Done", "Download and conversion completed.")
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = RinexDownloaderApp(root)
+    root.mainloop()
+
