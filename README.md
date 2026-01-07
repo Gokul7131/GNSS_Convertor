@@ -1,5 +1,5 @@
-# GNSS_Convertor
-A GUI Tool for GNSS Data Download and Conversion gor Bernese Processing
+# IGS_Convertor
+A GUI Tool for CDDIS IGS Data Download and Conversion gor Bernese Processing
 
 A Python-based automation tool developed to download and preprocess GNSS CORS data from NASA’s CDDIS archive for use in Bernese GNSS software.
 
